@@ -32,3 +32,5 @@ devops-capstone/
 
 See [`branching-strategy.md`](./branching-strategy.md) for the Git
 workflow used in this project.
+
+_Last updated via feature branch workflow._
