@@ -9,9 +9,7 @@ on:
   pull_request:
     branches: [develop, main]
 
-defaults:
-  run:
-    working-directory: app
+
 
 jobs:
   # ---------------------------------------------------------------------
@@ -20,6 +18,9 @@ jobs:
   build-and-test:
     name: CI - Build & Test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
