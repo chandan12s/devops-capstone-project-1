@@ -1,0 +1,113 @@
+name: CI/CD Pipeline
+
+# CI runs on every PR and every push to develop/main.
+# CD (deploy-dev / deploy-test / deploy-prod) only runs on actual pushes
+# (i.e. after a PR has been merged), never on the PR itself.
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [develop, main]
+
+defaults:
+  run:
+    working-directory: app
+
+jobs:
+  # ---------------------------------------------------------------------
+  # CI: install, lint, test, build artifact. Runs on every PR and push.
+  # ---------------------------------------------------------------------
+  build-and-test:
+    name: CI - Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint (code quality check)
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npm test -- --ci
+
+      - name: Build artifact
+        run: tar -czf task-api-build.tar.gz src package.json package-lock.json
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-api-build
+          path: app/task-api-build.tar.gz
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # CD - Dev: auto-deploys whenever develop is updated (merged PR).
+  # ---------------------------------------------------------------------
+  deploy-dev:
+    name: CD - Deploy to Dev
+    needs: build-and-test
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: task-api-build
+
+      - name: Deploy to Dev
+        run: |
+          echo "PLACEHOLDER: deploying task-api-build.tar.gz to the 'dev' namespace."
+          echo "This will become a real 'kubectl apply' / 'helm upgrade' command in Phase 4,"
+          echo "once we have a Docker image and a Kind cluster to deploy it to."
+
+  # ---------------------------------------------------------------------
+  # CD - Test: auto-deploys when main is updated (i.e. a release merge).
+  # ---------------------------------------------------------------------
+  deploy-test:
+    name: CD - Deploy to Test
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: task-api-build
+
+      - name: Deploy to Test
+        run: |
+          echo "PLACEHOLDER: deploying to the 'test' namespace."
+          echo "Wired up to real kubectl/helm commands in Phase 4."
+
+  # ---------------------------------------------------------------------
+  # CD - Prod: requires manual approval (configured as a required
+  # reviewer on the 'prod' environment in GitHub repo settings).
+  # ---------------------------------------------------------------------
+  deploy-prod:
+    name: CD - Deploy to Prod
+    needs: deploy-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: task-api-build
+
+      - name: Deploy to Prod
+        run: |
+          echo "PLACEHOLDER: deploying to the 'prod' namespace."
+          echo "Wired up to real kubectl/helm commands in Phase 4."
