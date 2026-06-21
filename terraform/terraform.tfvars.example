@@ -1,0 +1,4 @@
+aws_region   = "ap-south-1"
+project_name = "devops-capstone"
+
+github_repo = "your-github-username/devops-capstone-project"
