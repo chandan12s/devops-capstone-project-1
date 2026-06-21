@@ -9,8 +9,6 @@ on:
   pull_request:
     branches: [develop, main]
 
-
-
 jobs:
   # ---------------------------------------------------------------------
   # CI: install, lint, test, build artifact. Runs on every PR and push.
@@ -50,6 +48,36 @@ jobs:
           name: task-api-build
           path: app/task-api-build.tar.gz
           retention-days: 7
+
+  # ---------------------------------------------------------------------
+  # Phase 3, Task 6: dynamic secret retrieval in CI/CD.
+  # Uses GitHub OIDC to get short-lived AWS credentials - no access keys
+  # stored anywhere. Runs on every push so it's exercised continuously.
+  # ---------------------------------------------------------------------
+  verify-secrets:
+    name: CD - Verify Secret Retrieval (AWS SSM)
+    needs: build-and-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required to request the OIDC token
+      contents: read
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Retrieve secret dynamically from SSM Parameter Store
+        run: |
+          VALUE=$(aws ssm get-parameter \
+            --name "/devops-capstone/demo/api-key" \
+            --with-decryption \
+            --query Parameter.Value \
+            --output text)
+          # Never echo the actual secret to logs - only prove retrieval worked.
+          echo "Secret retrieved successfully (length: ${#VALUE} characters)."
 
   # ---------------------------------------------------------------------
   # CD - Dev: auto-deploys whenever develop is updated (merged PR).
