@@ -22,3 +22,17 @@ output "ssm_parameter_name" {
 output "cloudwatch_log_group_name" {
   value = aws_cloudwatch_log_group.app.name
 }
+
+output "k8s_node_public_ip" {
+  value = aws_instance.k8s_node.public_ip
+}
+
+output "ssh_command" {
+  description = "Run this to SSH into the Kubernetes node"
+  value       = "ssh -i ~/.ssh/devops-capstone-key ubuntu@${aws_instance.k8s_node.public_ip}"
+}
+
+output "ecr_repository_url" {
+  description = "Use this to tag/push images, and to replace REPLACE_ME in k8s/deployment.yaml and helm/task-api/values.yaml"
+  value       = aws_ecr_repository.app.repository_url
+}

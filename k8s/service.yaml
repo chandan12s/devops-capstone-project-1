@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: task-api
+spec:
+  # NodePort, not LoadBalancer - a cloud load balancer needs its own
+  # public IP (more $/hour) and isn't available on a self-managed
+  # kubeadm cluster anyway. NodePort exposes the app directly on the
+  # node's existing public IP, within the 30000-32767 range already
+  # opened in the EC2 security group.
+  type: NodePort
+  selector:
+    app: task-api
+  ports:
+    - port: 80
+      targetPort: 3000
+      nodePort: 30080
