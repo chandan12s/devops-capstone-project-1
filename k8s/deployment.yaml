@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-api
+  labels:
+    app: task-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: task-api
+  template:
+    metadata:
+      labels:
+        app: task-api
+    spec:
+      # Refreshed periodically via terraform/scripts/refresh-ecr-secret.sh -
+      # ECR auth tokens expire after ~12 hours.
+      imagePullSecrets:
+        - name: ecr-secret
+      containers:
+        - name: task-api
+          # Replace ACCOUNT_ID and REGION with your real values from:
+          #   terraform output ecr_repository_url
+          image: ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/devops-capstone/task-api:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+
+          # Readiness: is this pod ready to receive traffic right now?
+          # If this fails, the pod is pulled out of the Service's endpoints
+          # but NOT restarted.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # Liveness: is this pod still alive/healthy?
+          # If this fails repeatedly, Kubernetes restarts the container.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20

@@ -38,8 +38,8 @@ resource "aws_iam_role" "github_actions" {
 }
 
 # Least-privilege policy: this role can ONLY read our specific SSM
-# parameters. We'll attach more (e.g. ECR push) in Phase 4 as needed -
-# never grant broad access "just in case".
+# parameters. We'll attach more (e.g. ECR push) as needed - never grant
+# broad access "just in case".
 resource "aws_iam_role_policy" "github_actions_ssm_read" {
   name = "${var.project_name}-ssm-read"
   role = aws_iam_role.github_actions.id
@@ -51,6 +51,37 @@ resource "aws_iam_role_policy" "github_actions_ssm_read" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
         Resource = "arn:aws:ssm:${var.aws_region}:*:parameter/${var.project_name}/*"
+      }
+    ]
+  })
+}
+
+# Lets GitHub Actions push images to our private ECR repo (used once we
+# wire the pipeline's deploy steps up to build/push real images).
+resource "aws_iam_role_policy" "github_actions_ecr_push" {
+  name = "${var.project_name}-ecr-push"
+  role = aws_iam_role.github_actions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer"
+        ]
+        Resource = aws_ecr_repository.app.arn
       }
     ]
   })
