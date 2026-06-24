@@ -1,0 +1,7 @@
+Task API has been deployed.
+
+Check pod status:
+  kubectl get pods -l app={{ .Release.Name }}-task-api
+
+The app is reachable on the node's public IP at NodePort {{ .Values.service.nodePort }}:
+  curl http://<node-public-ip>:{{ .Values.service.nodePort }}/health

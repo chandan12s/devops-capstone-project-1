@@ -1,7 +1,7 @@
 name: CI/CD Pipeline
 
 # CI runs on every PR and every push to develop/main.
-# CD (deploy-dev / deploy-test / deploy-prod) only runs on actual pushes
+# CD (build-and-push-image, deploy-*) only runs on actual pushes
 # (i.e. after a PR has been merged), never on the PR itself.
 on:
   push:
@@ -9,7 +9,9 @@ on:
   pull_request:
     branches: [develop, main]
 
-
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: devops-capstone/task-api
 
 jobs:
   # ---------------------------------------------------------------------
@@ -52,45 +54,166 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------
-  # CD - Dev: auto-deploys whenever develop is updated (merged PR).
+  # Phase 3, Task 6: dynamic secret retrieval in CI/CD.
+  # Uses GitHub OIDC to get short-lived AWS credentials - no access keys
+  # stored anywhere. Runs on every push so it's exercised continuously.
+  # ---------------------------------------------------------------------
+  verify-secrets:
+    name: CD - Verify Secret Retrieval (AWS SSM)
+    needs: build-and-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required to request the OIDC token
+      contents: read
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Retrieve secret dynamically from SSM Parameter Store
+        run: |
+          VALUE=$(aws ssm get-parameter \
+            --name "/devops-capstone/demo/api-key" \
+            --with-decryption \
+            --query Parameter.Value \
+            --output text)
+          # Never echo the actual secret to logs - only prove retrieval worked.
+          echo "Secret retrieved successfully (length: ${#VALUE} characters)."
+
+  # ---------------------------------------------------------------------
+  # Phase 4, Task 7: build the Docker image and push it to our private
+  # ECR repo (terraform/ecr.tf). Runs on a GitHub-hosted runner via OIDC -
+  # this step doesn't touch the cluster, so it doesn't need the
+  # self-hosted runner.
+  # ---------------------------------------------------------------------
+  build-and-push-image:
+    name: CI - Build & Push Docker Image
+    needs: build-and-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.image.outputs.tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        working-directory: app
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------
+  # Phase 4, Tasks 8 & 9: real deploys to the persistent kubeadm cluster,
+  # via a self-hosted runner installed ON that same EC2 node. This means
+  # kubectl/helm talk to localhost - the cluster's API server (port 6443)
+  # never needs to be opened to the internet. See
+  # docs/architecture-decisions.md for the full reasoning.
+  #
+  # dev/test/prod are Kubernetes namespaces on the ONE cluster (not
+  # separate clusters) - this mirrors the PDF's original architecture
+  # diagram, which shows dev/test/staging/prod as namespaces.
   # ---------------------------------------------------------------------
   deploy-dev:
     name: CD - Deploy to Dev
-    needs: build-and-test
+    needs: build-and-push-image
     if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, k8s-node]
     environment: dev
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: task-api-build
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Deploy to Dev
+      - name: Ensure namespace exists
+        run: kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Refresh ECR pull secret for this namespace
         run: |
-          echo "PLACEHOLDER: deploying task-api-build.tar.gz to the 'dev' namespace."
-          echo "This will become a real 'kubectl apply' / 'helm upgrade' command in Phase 4,"
-          echo "once we have a Docker image and a Kind cluster to deploy it to."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          kubectl create secret docker-registry ecr-secret \
+            --namespace dev \
+            --docker-server="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" \
+            --docker-username=AWS \
+            --docker-password="$(aws ecr get-login-password --region ${{ env.AWS_REGION }})" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-  # ---------------------------------------------------------------------
-  # CD - Test: auto-deploys when main is updated (i.e. a release merge).
-  # ---------------------------------------------------------------------
+      - name: Deploy with Helm
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          helm upgrade --install task-api-dev ./helm/task-api \
+            --namespace dev \
+            --set image.repository="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}" \
+            --set image.tag="${{ needs.build-and-push-image.outputs.image_tag }}" \
+            --set replicaCount=1 \
+            --set service.nodePort=30080 \
+            --wait --timeout 120s
+
+      - name: Show running pods (evidence)
+        run: kubectl get pods -n dev -o wide
+
+      - name: Smoke test - real HTTP request against the running app
+        run: curl -sf http://localhost:30080/health
+
   deploy-test:
     name: CD - Deploy to Test
-    needs: build-and-test
+    needs: build-and-push-image
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, k8s-node]
     environment: test
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: task-api-build
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Deploy to Test
+      - name: Ensure namespace exists
+        run: kubectl create namespace test --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Refresh ECR pull secret for this namespace
         run: |
-          echo "PLACEHOLDER: deploying to the 'test' namespace."
-          echo "Wired up to real kubectl/helm commands in Phase 4."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          kubectl create secret docker-registry ecr-secret \
+            --namespace test \
+            --docker-server="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" \
+            --docker-username=AWS \
+            --docker-password="$(aws ecr get-login-password --region ${{ env.AWS_REGION }})" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Helm
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          helm upgrade --install task-api-test ./helm/task-api \
+            --namespace test \
+            --set image.repository="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}" \
+            --set image.tag="${{ needs.build-and-push-image.outputs.image_tag }}" \
+            --set replicaCount=2 \
+            --set service.nodePort=30081 \
+            --wait --timeout 120s
+
+      - name: Show running pods (evidence)
+        run: kubectl get pods -n test -o wide
+
+      - name: Smoke test - real HTTP request against the running app
+        run: curl -sf http://localhost:30081/health
 
   # ---------------------------------------------------------------------
   # CD - Prod: requires manual approval (configured as a required
@@ -100,15 +223,38 @@ jobs:
     name: CD - Deploy to Prod
     needs: deploy-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, k8s-node]
     environment: prod
     steps:
-      - name: Download build artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: task-api-build
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Deploy to Prod
+      - name: Ensure namespace exists
+        run: kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Refresh ECR pull secret for this namespace
         run: |
-          echo "PLACEHOLDER: deploying to the 'prod' namespace."
-          echo "Wired up to real kubectl/helm commands in Phase 4."
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          kubectl create secret docker-registry ecr-secret \
+            --namespace prod \
+            --docker-server="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com" \
+            --docker-username=AWS \
+            --docker-password="$(aws ecr get-login-password --region ${{ env.AWS_REGION }})" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy with Helm
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          helm upgrade --install task-api-prod ./helm/task-api \
+            --namespace prod \
+            --set image.repository="${ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}" \
+            --set image.tag="${{ needs.build-and-push-image.outputs.image_tag }}" \
+            --set replicaCount=2 \
+            --set service.nodePort=30082 \
+            --wait --timeout 120s
+
+      - name: Show running pods (evidence)
+        run: kubectl get pods -n prod -o wide
+
+      - name: Smoke test - real HTTP request against the running app
+        run: curl -sf http://localhost:30082/health
