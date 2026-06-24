@@ -79,6 +79,13 @@ resource "aws_iam_role_policy_attachment" "k8s_node_ecr_readonly" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
+# Phase 5: lets the CloudWatch agent on this node publish CPU/memory
+# metrics and ship container logs, without any stored credentials.
+resource "aws_iam_role_policy_attachment" "k8s_node_cloudwatch_agent" {
+  role       = aws_iam_role.k8s_node.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 resource "aws_iam_instance_profile" "k8s_node" {
   name = "${var.project_name}-k8s-node-profile"
   role = aws_iam_role.k8s_node.name
