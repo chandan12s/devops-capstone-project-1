@@ -13,9 +13,6 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: devops-capstone/task-api
 
-defaults:
-  run:
-    working-directory: app
 
 jobs:
   # ---------------------------------------------------------------------
