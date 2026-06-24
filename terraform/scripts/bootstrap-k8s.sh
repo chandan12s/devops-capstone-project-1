@@ -80,4 +80,55 @@ kubectl patch deployment metrics-server -n kube-system --type='json' \
 # --- 11. Install Helm ---
 curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
+# --- 12. Install and configure the CloudWatch agent (Phase 5: metrics + logs) ---
+# One agent handles both: CPU/memory metrics (EC2 reports CPU by default,
+# but NOT memory - that needs this agent), and tailing container log
+# files into CloudWatch Logs.
+curl -s https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -o /tmp/amazon-cloudwatch-agent.deb
+dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
+rm -f /tmp/amazon-cloudwatch-agent.deb
+
+mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+cat <<'CWAGENT_EOF' > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+{
+  "agent": {
+    "metrics_collection_interval": 60
+  },
+  "metrics": {
+    "namespace": "DevOpsCapstone/EC2",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}"
+    },
+    "metrics_collected": {
+      "cpu": {
+        "measurement": ["cpu_usage_active"],
+        "metrics_collection_interval": 60,
+        "totalcpu": true
+      },
+      "mem": {
+        "measurement": ["mem_used_percent"],
+        "metrics_collection_interval": 60
+      }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/containers/*.log",
+            "log_group_name": "/devops-capstone/app",
+            "log_stream_name": "{instance_id}-{file_name}"
+          }
+        ]
+      }
+    }
+  }
+}
+CWAGENT_EOF
+
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
 echo "=== Kubernetes bootstrap complete: $(date) ==="
