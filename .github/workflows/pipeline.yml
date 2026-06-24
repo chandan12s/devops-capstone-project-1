@@ -13,7 +13,6 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: devops-capstone/task-api
 
-
 jobs:
   # ---------------------------------------------------------------------
   # CI: install, lint, test, build artifact. Runs on every PR and push.
@@ -23,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-      working-directory: app
+        working-directory: app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,7 +32,7 @@ jobs:
         with:
           node-version: '18'
           cache: 'npm'
-          cache-dependency-path: ./package-lock.json
+          cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -51,7 +50,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: task-api-build
-          path: ./task-api-build.tar.gz
+          path: app/task-api-build.tar.gz
           retention-days: 7
 
   # ---------------------------------------------------------------------
