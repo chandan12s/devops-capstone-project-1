@@ -87,3 +87,20 @@ since the node already exists.
 running. In practice this is fine - the instance is something we
 deliberately start/stop per session anyway, and a queued deploy job
 just waits for the runner to come back online rather than failing.
+
+## 5. npm audit + GitHub Dependency Review instead of Snyk/OWASP/SonarQube
+
+**Original ask:** Dependency scanning via Snyk, OWASP Dependency-Check,
+or SonarQube.
+
+**Decision:** Use `npm audit` (built into npm) as a CI gate, plus
+GitHub's Dependency Review Action on pull requests.
+
+**Why:** Snyk requires an account and API token; OWASP Dependency-Check
+needs an NVD API key for reasonable sync speed in CI; SonarQube needs
+either a paid SonarCloud account or a self-hosted server. `npm audit`
+needs none of that - it's already part of npm, checks against the npm
+registry's own advisory database, and Dependency Review is free on
+public repos with no GitHub Advanced Security purchase required (that
+restriction only applies to private repos). Same protection - failing
+the pipeline on critical vulnerabilities - zero extra accounts.
