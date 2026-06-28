@@ -14,9 +14,9 @@ env:
   ECR_REPOSITORY: devops-capstone/task-api
 
 jobs:
-  # ---------------------------------------------------------------------
+  # ----------------------------------------------------------------------
   # CI: install, lint, test, build artifact. Runs on every PR and push.
-  # ---------------------------------------------------------------------
+  # ----------------------------------------------------------------------
   build-and-test:
     name: CI - Build & Test
     runs-on: ubuntu-latest
@@ -63,6 +63,9 @@ jobs:
     name: Security - Dependency Scan (npm audit)
     needs: build-and-test
     runs-on: ubuntu-latest
+    defaults:
+    run:
+      working-directory: app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
