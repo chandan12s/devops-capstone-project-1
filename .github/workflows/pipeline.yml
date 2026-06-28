@@ -63,6 +63,9 @@ jobs:
     name: Security - Dependency Scan (npm audit)
     needs: build-and-test
     runs-on: ubuntu-latest
+    defaults:
+    run:
+      working-directory: app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
