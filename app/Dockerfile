@@ -8,6 +8,13 @@ RUN npm ci --omit=dev
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
+# Pull the latest patched OS packages at build time rather than trusting
+# whatever was baked into the base image when it was last published -
+# this is what actually fixes OS-level CVEs (e.g. the openssl one ECR's
+# scan flagged), since Alpine ships security patches continuously
+# regardless of the base image tag's own publish cadence.
+RUN apk update && apk upgrade --no-cache
+
 # Run as a non-root user - never run production containers as root
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 

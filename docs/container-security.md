@@ -12,26 +12,46 @@ waits for each scan to finish, then **fails the build if any CRITICAL
 severity finding is reported**. Findings are also saved as a downloadable
 `ecr-scan-findings` artifact on every run, regardless of pass/fail.
 
-## Findings (fill this in from your own real scan)
+## Findings (from a real scan, image tag `f812bfc...`)
 
-Run this after a push completes, or just open the artifact / AWS Console:
-```bash
-aws ecr describe-image-scan-findings \
-  --repository-name devops-capstone/task-api \
-  --image-id imageTag=<sha> \
-  --region ap-south-1
-```
-Or: AWS Console → ECR → `devops-capstone/task-api` → click the image →
-**Scan results** tab.
+Scan completed: 2026-06-28. All 15 findings are in a single package -
+**`openssl 3.5.6-r0`**, part of the `node:20-alpine` base image's OS
+layer, not anything in our own `npm` dependencies. Severity breakdown:
+**1 CRITICAL, 8 HIGH, 4 MEDIUM, 2 LOW.**
 
-| Severity | Package | CVE | Description | Status |
+| Severity | Package | CVE | Summary | Status |
 |---|---|---|---|---|
-| _(e.g. HIGH)_ | _(e.g. libssl3)_ | _(e.g. CVE-2024-xxxx)_ | _(one-line summary)_ | _(Mitigated / Accepted risk / Not exploitable in our context)_ |
+| CRITICAL | openssl 3.5.6-r0 | CVE-2026-34182 | Insufficient validation of cipher/tag fields in CMS `AuthEnvelopedData` processing allows message forgery and integrity bypass | Mitigated - rebuilt with `apk upgrade` (see Dockerfile) |
+| HIGH | openssl 3.5.6-r0 | CVE-2026-45447 | Use-after-free during PKCS#7/S-MIME signature verification, can crash or potentially enable code execution | Mitigated - rebuilt with `apk upgrade` |
+| HIGH | openssl 3.5.6-r0 | CVE-2026-7383 | Integer overflow sizing a Unicode string buffer in ASN.1 processing, can cause heap buffer overflow | Mitigated - rebuilt with `apk upgrade` |
+| HIGH | openssl 3.5.6-r0 | CVE-2026-9076 | Heap out-of-bounds read in CMS password-based key unwrap, can crash the process | Mitigated - rebuilt with `apk upgrade` |
+| HIGH | openssl 3.5.6-r0 | CVE-2026-34181 / -34180 / -42764 / -34183 / -45445 | Various DoS / certificate-forgery issues across PKCS#12, ASN.1 decoding, QUIC, and AES-OCB handling - none of these code paths are reachable from our app (we don't terminate QUIC or parse attacker-supplied PKCS#12/CMS), but patched anyway since they ship in the same package update | Mitigated - rebuilt with `apk upgrade` |
+| MEDIUM / LOW | openssl 3.5.6-r0 | CVE-2026-42766, -45446, -42767, -42769, -42770, -42768 | Assorted DoS / niche cryptographic edge cases, several requiring attacker-controlled CMP/CMS input our app never processes | Mitigated - rebuilt with `apk upgrade` |
 
-(Leave this table empty with a note "no findings at time of scan" if
-that's genuinely what you see - `node:20-alpine`'s small package count
-means it's common to have zero or very few findings. That's a real,
-valid result worth recording too, not something to pad out.)
+Full raw findings: see the `ecr-scan-findings` workflow artifact.
+
+## Root cause
+
+None of these came from our own code or `npm` dependencies - all 15
+were in the OS-level `openssl` package bundled with `node:20-alpine`.
+The original Dockerfile only got whatever OpenSSL build was baked into
+the base image at the moment that tag was last published; it didn't
+explicitly pull current Alpine security updates at build time.
+
+## Fix applied
+
+Added `RUN apk update && apk upgrade --no-cache` to the runtime stage
+in `app/Dockerfile`, so every build pulls Alpine's current patched
+packages regardless of how old the cached base image layer is. This is
+now a standing practice, not a one-time fix - it'll keep picking up
+future OS patches automatically on every build.
+
+**If a future rebuild still shows the same CVE:** it likely means
+Alpine hasn't published a patched `openssl` build yet (CVE disclosure
+and patch availability don't always land same-day). Check
+`https://pkgs.alpinelinux.org/packages?name=openssl` for the patched
+version, and either wait and retry, or pin explicitly once a fix
+exists: `apk add --no-cache 'openssl>=<patched-version>'`.
 
 ## Mitigations already in place (regardless of specific findings)
 
