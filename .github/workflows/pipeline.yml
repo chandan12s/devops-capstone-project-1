@@ -59,13 +59,6 @@ jobs:
     name: Security - Dependency Scan (npm audit)
     needs: build-and-test
     runs-on: ubuntu-latest
-    # This job-level working-directory overrides the global default of 'app'.
-    # It LOOKS like it's setting the root correctly but it actually points
-    # npm ci at the repo root where there is no package.json.
-    defaults:
-      run:
-        working-directory: ./
-    # ----------------------------------
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
