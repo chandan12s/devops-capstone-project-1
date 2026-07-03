@@ -1,8 +1,12 @@
 name: CI/CD Pipeline
 
-# CI runs on every PR and every push to develop/main.
-# CD (build-and-push-image, deploy-*) only runs on actual pushes
-# (i.e. after a PR has been merged), never on the PR itself.
+# working-directory to './' (repo root), losing the 'app/' prefix set
+# in defaults.run. npm ci therefore fails because package.json doesn't
+# exist at the repo root, only under app/.
+# This mimics a real mistake: developer copies a job from another repo,
+# forgets this repo uses a non-root app directory, adds an explicit
+# working-directory that looks reasonable but is wrong.
+
 on:
   push:
     branches: [main, develop]
@@ -13,16 +17,14 @@ env:
   AWS_REGION: ap-south-1
   ECR_REPOSITORY: devops-capstone/task-api
 
+defaults:
+  run:
+    working-directory: app
+
 jobs:
-  # ----------------------------------------------------------------------
-  # CI: install, lint, test, build artifact. Runs on every PR and push.
-  # ----------------------------------------------------------------------
   build-and-test:
     name: CI - Build & Test
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: app
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -53,19 +55,17 @@ jobs:
           path: app/task-api-build.tar.gz
           retention-days: 7
 
-  # ---------------------------------------------------------------------
-  # Phase 6, Task 12: dependency vulnerability scanning.
-  # npm audit needs no account/API key - checks against the npm registry's
-  # own vulnerability database. Fails the job (and therefore the pipeline)
-  # if any CRITICAL severity vulnerability is found.
-  # ---------------------------------------------------------------------
   dependency-scan:
     name: Security - Dependency Scan (npm audit)
     needs: build-and-test
     runs-on: ubuntu-latest
+    # This job-level working-directory overrides the global default of 'app'.
+    # It LOOKS like it's setting the root correctly but it actually points
+    # npm ci at the repo root where there is no package.json.
     defaults:
       run:
-        working-directory: app
+        working-directory: ./
+    # ----------------------------------
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,9 +95,6 @@ jobs:
       - name: Fail the pipeline on critical vulnerabilities
         run: npm audit --audit-level=critical
 
-  # GitHub's own dependency advisory check on PRs - free on public repos,
-  # no signup or API key. Flags newly-introduced vulnerable dependencies
-  # before they're even merged, not just after.
   dependency-review:
     name: Security - Dependency Review (PR only)
     if: github.event_name == 'pull_request'
@@ -108,18 +105,13 @@ jobs:
         with:
           fail-on-severity: critical
 
-  # ---------------------------------------------------------------------
-  # Phase 3, Task 6: dynamic secret retrieval in CI/CD.
-  # Uses GitHub OIDC to get short-lived AWS credentials - no access keys
-  # stored anywhere. Runs on every push so it's exercised continuously.
-  # ---------------------------------------------------------------------
   verify-secrets:
     name: CD - Verify Secret Retrieval (AWS SSM)
     needs: build-and-test
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      id-token: write   # required to request the OIDC token
+      id-token: write
       contents: read
     steps:
       - name: Configure AWS credentials via OIDC
@@ -135,15 +127,8 @@ jobs:
             --with-decryption \
             --query Parameter.Value \
             --output text)
-          # Never echo the actual secret to logs - only prove retrieval worked.
           echo "Secret retrieved successfully (length: ${#VALUE} characters)."
 
-  # ---------------------------------------------------------------------
-  # Phase 4, Task 7: build the Docker image and push it to our private
-  # ECR repo (terraform/ecr.tf). Runs on a GitHub-hosted runner via OIDC -
-  # this step doesn't touch the cluster, so it doesn't need the
-  # self-hosted runner.
-  # ---------------------------------------------------------------------
   build-and-push-image:
     name: CI - Build & Push Docker Image
     needs: [build-and-test, dependency-scan]
@@ -179,9 +164,6 @@ jobs:
           docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
-      # Phase 6, Task 13: ECR scans automatically on push (scan_on_push =
-      # true in terraform/ecr.tf, completely free). We poll for it to
-      # finish, then fail the pipeline if any CRITICAL finding exists.
       - name: Wait for ECR image scan to complete
         run: |
           for i in $(seq 1 15); do
@@ -224,17 +206,6 @@ jobs:
             exit 1
           fi
 
-  # ---------------------------------------------------------------------
-  # Phase 4, Tasks 8 & 9: real deploys to the persistent kubeadm cluster,
-  # via a self-hosted runner installed ON that same EC2 node. This means
-  # kubectl/helm talk to localhost - the cluster's API server (port 6443)
-  # never needs to be opened to the internet. See
-  # docs/architecture-decisions.md for the full reasoning.
-  #
-  # dev/test/prod are Kubernetes namespaces on the ONE cluster (not
-  # separate clusters) - this mirrors the PDF's original architecture
-  # diagram, which shows dev/test/staging/prod as namespaces.
-  # ---------------------------------------------------------------------
   deploy-dev:
     name: CD - Deploy to Dev
     needs: build-and-push-image
@@ -315,10 +286,6 @@ jobs:
       - name: Smoke test - real HTTP request against the running app
         run: curl -sf http://localhost:30081/health
 
-  # ---------------------------------------------------------------------
-  # CD - Prod: requires manual approval (configured as a required
-  # reviewer on the 'prod' environment in GitHub repo settings).
-  # ---------------------------------------------------------------------
   deploy-prod:
     name: CD - Deploy to Prod
     needs: [build-and-push-image, deploy-test]
