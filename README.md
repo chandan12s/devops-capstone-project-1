@@ -445,3 +445,6 @@ Terraform creates two alarms in `cloudwatch.tf`:
 |---|---|---|
 | `devops-capstone-high-cpu` | CPU > 80% for 2 consecutive 5-minute periods | SNS notification |
 | `devops-capstone-high-memory` | Memory > 85% for 2 consecutive 5-minute periods | SNS notification |
+
+*** Name - Chandan S
+*** Assignment - Devops capstone project - 1
