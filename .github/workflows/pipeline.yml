@@ -54,7 +54,6 @@ jobs:
           retention-days: 7
 
   # ---------------------------------------------------------------------
-  # Phase 3, Task 6: dynamic secret retrieval in CI/CD.
   # Uses GitHub OIDC to get short-lived AWS credentials - no access keys
   # stored anywhere. Runs on every push so it's exercised continuously.
   # ---------------------------------------------------------------------
@@ -84,7 +83,7 @@ jobs:
           echo "Secret retrieved successfully (length: ${#VALUE} characters)."
 
   # ---------------------------------------------------------------------
-  # Phase 4, Task 7: build the Docker image and push it to our private
+  # build the Docker image and push it to private
   # ECR repo (terraform/ecr.tf). Runs on a GitHub-hosted runner via OIDC -
   # this step doesn't touch the cluster, so it doesn't need the
   # self-hosted runner.
@@ -125,7 +124,7 @@ jobs:
           echo "tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------
-  # Phase 4, Tasks 8 & 9: real deploys to the persistent kubeadm cluster,
+  # deploys to persistent kubeadm cluster,
   # via a self-hosted runner installed ON that same EC2 node. This means
   # kubectl/helm talk to localhost - the cluster's API server (port 6443)
   # never needs to be opened to the internet. See
